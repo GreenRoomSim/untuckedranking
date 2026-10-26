@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ballot</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head><body><main>
+<section id="login" hidden>
+  <h1>Sign in</h1><p class="sub">Use the username and code you were sent.</p>
+  <label for="u">Username</label><input id="u" autocomplete="username" autocapitalize="none">
+  <label for="c">Code</label><input id="c" type="password" inputmode="numeric" autocomplete="current-password">
+  <p id="lerr" class="err" role="alert"></p>
+  <button class="btn primary block" id="go">Sign in</button>
+</section>
+
+<div id="app" hidden>
+  <div class="row"><h1 id="hi"></h1><button class="btn small" id="out">Sign out</button></div>
+  <p id="msg" class="sub"></p>
+  <section id="ballot" hidden>
+    <h2 id="eph"></h2><p class="chal" id="chal"></p>
+    <p class="sub" style="margin-bottom:12px">Rank everyone from best to worst, yourself included. Drag a name, or tab to a handle and use the arrow keys.</p>
+    <div class="end">Best</div><ul class="rk" id="list"></ul>
+    <div class="end bottom">Worst &middot; the bottom two lip sync</div>
+    <p id="st" class="hint" style="margin:0 0 12px"></p>
+    <button class="btn primary block" id="save">Submit ranking</button>
+  </section>
+  <section id="res" hidden><h2 id="rh"></h2><p class="chal" id="rc"></p><ul class="plain" id="rl"></ul></section>
+</div>
+</main>
+<script type="module">
+import {firebaseConfig,emailFor,passFor} from "./firebase-config.js";
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,doc,getDoc,setDoc,onSnapshot,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const auth=getAuth(initializeApp(firebaseConfig)),db=getFirestore(),$=id=>document.getElementById(id),H=64;
+let S=null,me=null,order=[],saved=false,dirty=false,loadedEp=null,unsub=null;
+const cls={"Wins the challenge":"t-win","Top":"t-top","Safe":"t-safe","Bottom two":"t-bot"};
+const GRIP='<svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="6" cy="4" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="6" cy="9" r="1.5"/><circle cx="12" cy="9" r="1.5"/><circle cx="6" cy="14" r="1.5"/><circle cx="12" cy="14" r="1.5"/></svg>';
+
+$("go").onclick=async()=>{
+  $("lerr").textContent="";
+  try{await signInWithEmailAndPassword(auth,emailFor($("u").value),passFor($("c").value))}
+  catch{$("lerr").textContent="That username and code don\u2019t match."}
+};
+$("c").onkeydown=e=>{if(e.key==="Enter")$("go").click()};
+$("out").onclick=()=>signOut(auth);
+
+onAuthStateChanged(auth,async user=>{
+  if(unsub){unsub();unsub=null}
+  $("login").hidden=!!user;$("app").hidden=!user;
+  if(!user)return;
+  const v=await getDoc(doc(db,"voters",user.uid));
+  if(!v.exists()){$("login").hidden=false;$("app").hidden=true;$("lerr").textContent="This account isn\u2019t set up to vote.";signOut(auth);return}
+  me={...v.data(),uid:user.uid};$("hi").textContent="Hi, "+me.name;
+  loadedEp=null;
+  unsub=onSnapshot(doc(db,"state","current"),async s=>{
+    S=s.data();
+    if(S&&loadedEp!==S.ep){loadedEp=S.ep;await loadBallot()}
+    render();
+  });
+});
+
+async function loadBallot(){
+  const b=await getDoc(doc(db,"ballots","ep"+S.ep+"_"+me.uid));
+  saved=b.exists();dirty=false;
+  const r=saved?b.data().ranking.filter(n=>S.cast.includes(n)):[];
+  order=r.concat(S.cast.filter(n=>!r.includes(n)));
+}
+
+async function render(){
+  const ballot=$("ballot"),res=$("res");
+  ballot.hidden=true;res.hidden=true;$("msg").textContent="";
+  if(!S){$("msg").textContent="The season hasn\u2019t started yet.";return}
+  if(S.open){
+    ballot.hidden=false;
+    $("eph").textContent="Episode "+S.ep;
+    $("chal").textContent=S.challenge||"Challenge coming soon.";
+    $("save").textContent=saved?"Update ranking":"Submit ranking";
+    $("st").textContent=saved&&!dirty?"Ballot saved. You can change it until voting closes.":saved?"You have unsaved changes.":"Not submitted yet.";
+    drawList();
+  }else{
+    $("msg").textContent=S.published?"":"Voting is closed. Results are coming.";
+    const n=S.published?S.ep:S.ep-1;
+    if(n<1)return;
+    const h=await getDoc(doc(db,"history","ep"+n));
+    if(!h.exists())return;
+    const d=h.data();res.hidden=false;
+    $("rh").textContent="Episode "+d.ep+" ranking";$("rc").textContent=d.challenge;
+    $("rl").innerHTML="";
+    d.rows.forEach((r,i)=>{
+      const li=document.createElement("li"),a=document.createElement("span"),b=document.createElement("span");
+      a.textContent=(i+1)+". "+r.name;
+      b.textContent=r.name===d.eliminated?"Eliminated":r.tag;
+      b.className="t-"+(r.name===d.eliminated?"bot":{"Wins the challenge":"win","Top":"top","Safe":"safe","Bottom two":"bot"}[r.tag]);
+      li.append(a,b);$("rl").append(li);
+    });
+  }
+}
+
+function drawList(focus){
+  const list=$("list");list.innerHTML="";
+  order.forEach((n,i)=>{
+    const li=document.createElement("li");
+    li.innerHTML='<span class="rank">'+(i+1)+'</span><span class="name"></span><button class="grip">'+GRIP+'</button>';
+    li.querySelector(".name").textContent=n;
+    const g=li.querySelector(".grip");g.setAttribute("aria-label","Move "+n+", rank "+(i+1));
+    g.onpointerdown=e=>drag(e,li,i,g);
+    g.onkeydown=e=>{
+      const j=e.key==="ArrowUp"?i-1:e.key==="ArrowDown"?i+1:-1;
+      if(j<0||j>=order.length)return;
+      e.preventDefault();mv(i,j);drawList(j);
+    };
+    list.append(li);
+  });
+  if(focus!=null)list.children[focus].querySelector(".grip").focus();
+}
+function mv(a,b){order.splice(b,0,order.splice(a,1)[0]);dirty=true;$("st").textContent=saved?"You have unsaved changes.":"Not submitted yet."}
+function drag(e,li,from,g){
+  e.preventDefault();g.setPointerCapture(e.pointerId);
+  const y0=e.clientY,items=[...$("list").children];let to=from;li.classList.add("drag");
+  const move=ev=>{
+    const dy=Math.max(-from*H,Math.min((items.length-1-from)*H,ev.clientY-y0));
+    li.style.transform="translateY("+dy+"px)";to=Math.round((from*H+dy)/H);
+    items.forEach((it,k)=>{if(it===li)return;let s=0;
+      if(from<to&&k>from&&k<=to)s=-H;if(from>to&&k<from&&k>=to)s=H;
+      it.style.transform=s?"translateY("+s+"px)":""});
+  };
+  const up=()=>{g.removeEventListener("pointermove",move);g.removeEventListener("pointerup",up);g.removeEventListener("pointercancel",up);mv(from,to);drawList(to)};
+  g.addEventListener("pointermove",move);g.addEventListener("pointerup",up);g.addEventListener("pointercancel",up);
+}
+
+$("save").onclick=async()=>{
+  $("save").disabled=true;
+  try{
+    await setDoc(doc(db,"ballots","ep"+S.ep+"_"+me.uid),{ep:S.ep,uid:me.uid,ranking:order,at:serverTimestamp()});
+    saved=true;dirty=false;render();
+  }catch{$("st").textContent="Couldn\u2019t save. Voting may have just closed.";$("st").className="err"}
+  $("save").disabled=false;
+};
+</script></body></html>

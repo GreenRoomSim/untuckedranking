@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Admin</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head><body><main class="wide">
+<section id="login" hidden>
+  <h1>Admin sign in</h1>
+  <label for="e">Email</label><input id="e" type="email" autocomplete="username">
+  <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
+  <p id="lerr" class="err" role="alert"></p><button class="btn primary block" id="go">Sign in</button>
+</section>
+<div id="app" hidden>
+  <div class="row"><h1>Season admin</h1><button class="btn small" id="out">Sign out</button></div>
+  <p id="msg" class="sub"></p>
+  <section id="start" hidden><h2>No season yet</h2><button class="btn primary" id="init">Start season</button></section>
+  <section id="ep" hidden></section>
+  <section id="cast" hidden></section>
+  <section id="results" hidden></section>
+</div>
+</main>
+<script type="module">
+import {firebaseConfig,emailFor,passFor} from "./firebase-config.js";
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,doc,setDoc,updateDoc,onSnapshot,collection,query,where,arrayUnion,arrayRemove} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),$=id=>document.getElementById(id);
+const auth2=getAuth(initializeApp(firebaseConfig,"second")); // creates voter accounts without signing the admin out
+const stRef=doc(db,"state","current");
+let S=null,voters=[],ballots=[],elim=null,err="",castErr="",subs=[],ballotEp=null;
+const esc=s=>{const d=document.createElement("div");d.textContent=s;return d.innerHTML};
+const cls={"Wins the challenge":"t-win","Top":"t-top","Safe":"t-safe","Bottom two":"t-bot"};
+
+$("go").onclick=async()=>{$("lerr").textContent="";
+  try{await signInWithEmailAndPassword(auth,$("e").value,$("p").value)}catch{$("lerr").textContent="Sign in failed."}};
+$("p").onkeydown=e=>{if(e.key==="Enter")$("go").click()};
+$("out").onclick=()=>signOut(auth);
+$("init").onclick=()=>setDoc(stRef,{ep:1,challenge:"",open:false,published:false,eliminated:null,cast:[]});
+
+onAuthStateChanged(auth,user=>{
+  subs.forEach(u=>u());subs=[];
+  $("login").hidden=!!user;$("app").hidden=!user;
+  if(!user)return;
+  subs.push(onSnapshot(stRef,s=>{S=s.exists()?s.data():null;
+    if(S&&S.ep!==ballotEp){ballotEp=S.ep;elim=null;watchBallots()}
+    renderAll()},e=>{$("msg").textContent="This account isn\u2019t the admin, or the rules aren\u2019t published yet."}));
+  subs.push(onSnapshot(collection(db,"voters"),s=>{voters=s.docs.map(d=>({id:d.id,...d.data()}));renderCast();renderRes()}));
+});
+let bUnsub=null;
+function watchBallots(){
+  if(bUnsub)bUnsub();
+  bUnsub=onSnapshot(query(collection(db,"ballots"),where("ep","==",S.ep)),s=>{ballots=s.docs.map(d=>d.data());renderCast();renderRes()});
+  subs.push(()=>bUnsub&&bUnsub());
+}
+
+function renderAll(){
+  $("start").hidden=!!S;["ep","cast","results"].forEach(i=>$(i).hidden=!S);
+  if(!S)return;renderEp();renderCast();renderRes();
+}
+
+function renderEp(){
+  $("ep").innerHTML='<h2>Episode '+S.ep+'</h2><label for="chal">Challenge description</label>'+
+   '<textarea id="chal" '+(S.published?"disabled":"")+' placeholder="What did the cast do this week? Voters see this above their ballot.">'+esc(S.challenge)+'</textarea>'+
+   '<div class="row"><div><label>Voting</label><div class="seg"><button id="bo" aria-pressed="'+S.open+'" '+(S.published?"disabled":"")+'>Open</button><button id="bl" aria-pressed="'+!S.open+'">Locked</button></div></div>'+
+   '<span class="hint" id="count"></span></div>';
+  $("chal").onchange=e=>updateDoc(stRef,{challenge:e.target.value});
+  $("bo").onclick=()=>{if(!S.published)updateDoc(stRef,{open:true})};
+  $("bl").onclick=()=>updateDoc(stRef,{open:false});
+}
+
+function renderCast(){
+  if(!S)return;
+  const done=new Set(ballots.map(b=>b.uid));
+  const rows=voters.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v=>{
+    const inn=S.cast.includes(v.name);
+    return '<tr><td>'+esc(v.name)+(inn?"":' <span class="gone">(out)</span>')+'</td><td>'+esc(v.username)+'</td><td>'+esc(v.code)+'</td>'+
+      '<td class="'+(done.has(v.id)?"ok":"gone")+'">'+(done.has(v.id)?"Submitted":"Waiting")+'</td>'+
+      '<td style="text-align:right">'+(inn?'<button class="btn small" data-rm="'+esc(v.name)+'">Remove</button>':'')+'</td></tr>';
+  }).join("");
+  $("cast").innerHTML='<h2>Cast and accounts</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Code</th><th>Ballot</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+   '<label for="nn">Add a person</label><div class="row" style="align-items:flex-start"><input id="nn" placeholder="Display name" maxlength="24"><input id="nu" placeholder="Username" maxlength="20" autocapitalize="none"><input id="nc" placeholder="4-digit code" inputmode="numeric" maxlength="4"><button class="btn" id="add" style="white-space:nowrap">Add</button></div>'+
+   '<p class="err" role="alert">'+castErr+'</p><p class="hint">Removing someone drops them from every ballot. Send codes by DM.</p>';
+  $("count").textContent=done.size+" of "+voters.length+" ballots in";
+  $("cast").querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>updateDoc(stRef,{cast:arrayRemove(b.dataset.rm)}));
+  $("add").onclick=addPerson;
+}
+async function addPerson(){
+  castErr="";const name=$("nn").value.trim(),u=$("nu").value.trim(),c=$("nc").value.trim();
+  if(!name||!u||!/^\d{4}$/.test(c)){castErr="Enter a name, a username and a 4-digit code.";return renderCast()}
+  try{
+    const cr=await createUserWithEmailAndPassword(auth2,emailFor(u),passFor(c));await signOut(auth2);
+    await setDoc(doc(db,"voters",cr.user.uid),{name,username:emailFor(u).split("@")[0],code:c});
+    await updateDoc(stRef,{cast:arrayUnion(name)});
+  }catch(e){castErr=e.code==="auth/email-already-in-use"?"That username is taken.":"Couldn\u2019t create the account."}
+  renderCast();
+}
+
+function standings(){
+  const sum={},cnt={};S.cast.forEach(n=>{sum[n]=0;cnt[n]=0});
+  ballots.forEach(b=>b.ranking.filter(n=>S.cast.includes(n)).forEach((n,i)=>{sum[n]+=i+1;cnt[n]++}));
+  const rows=S.cast.map(n=>({name:n,avg:cnt[n]?sum[n]/cnt[n]:0})).sort((a,b)=>a.avg-b.avg),N=rows.length;
+  rows.forEach((r,i)=>r.tag=i===0?"Wins the challenge":(N>=6&&i<=2)?"Top":(N>3&&i>=N-2)?"Bottom two":"Safe");
+  return rows;
+}
+function renderRes(){
+  const sec=$("results");if(!S||S.open||!ballots.length&&!S.published){sec.hidden=true;return}
+  sec.hidden=false;const rows=standings(),e=S.published?S.eliminated:elim;
+  if(S.published){
+    sec.innerHTML='<h2>Episode '+S.ep+' ranking is published</h2><button class="btn primary" id="next">Start episode '+(S.ep+1)+'</button>';
+    $("next").onclick=()=>updateDoc(stRef,{ep:S.ep+1,challenge:"",open:false,published:false,eliminated:null,...(S.eliminated?{cast:arrayRemove(S.eliminated)}:{})});
+    return;
+  }
+  sec.innerHTML='<h2>Results</h2><div class="scroll"><table><thead><tr><th></th><th>Contestant</th><th>Avg rank</th><th>Placement</th><th></th></tr></thead><tbody>'+
+   rows.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(r.name)+'</td><td>'+r.avg.toFixed(2)+'</td><td class="'+cls[r.tag]+'">'+r.tag+'</td><td style="text-align:right">'+
+     (r.tag==="Bottom two"?'<button class="btn small '+(e===r.name?"primary":"")+'" data-el="'+esc(r.name)+'">'+(e===r.name?"Eliminated":"Eliminate")+'</button>':"")+'</td></tr>').join("")+
+   '</tbody></table></div><p class="hint" style="margin:0 0 12px">Lowest average is best. Run the lip sync in Discord, then mark who goes home.</p><p class="err" role="alert">'+err+'</p><button class="btn primary" id="pub">Publish episode '+S.ep+' ranking</button>';
+  sec.querySelectorAll("[data-el]").forEach(b=>b.onclick=()=>{elim=elim===b.dataset.el?null:b.dataset.el;err="";renderRes()});
+  $("pub").onclick=async()=>{
+    if(!S.challenge.trim()){err="Add a challenge description first.";return renderRes()}
+    if(!elim&&S.cast.length>2){err="Choose who is eliminated.";return renderRes()}
+    await setDoc(doc(db,"history","ep"+S.ep),{ep:S.ep,challenge:S.challenge,rows,eliminated:elim||null});
+    await updateDoc(stRef,{published:true,open:false,eliminated:elim||null});
+  };
+}
+</script></body></html>
