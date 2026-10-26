@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function admin() { return request.auth != null && request.auth.uid == 'WRYVYoxSxvbzK4PbiuLOJiHXsr72'; }
+    function admin() { return request.auth != null && request.auth.uid == 'PASTE_ADMIN_UID'; }
     function st() { return get(/databases/$(database)/documents/state/current).data; }
 
     match /voters/{id} {
@@ -14,7 +14,7 @@ service cloud.firestore {
       allow read: if admin() || (request.auth != null && id.matches('ep[0-9]+_' + request.auth.uid));
       allow create, update: if request.auth != null
         && id == 'ep' + string(st().ep) + '_' + request.auth.uid
-        && exists(/databases/$(database)/documents/voters/$(request.auth.uid))
+        && get(/databases/$(database)/documents/voters/$(request.auth.uid)).data.get('canVote', true) == true
         && st().open == true
         && request.resource.data.ep == st().ep
         && request.resource.data.ranking.size() == st().cast.size()

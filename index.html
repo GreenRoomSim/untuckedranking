@@ -24,7 +24,6 @@
     <p id="st" class="hint" style="margin:0 0 12px"></p>
     <button class="btn primary block" id="save">Submit ranking</button>
   </section>
-  <section id="res" hidden><h2 id="rh"></h2><p class="chal" id="rc"></p><ul class="plain" id="rl"></ul></section>
 </div>
 </main>
 <script type="module">
@@ -45,17 +44,19 @@ $("go").onclick=async()=>{
 $("c").onkeydown=e=>{if(e.key==="Enter")$("go").click()};
 $("out").onclick=()=>signOut(auth);
 
+let vUnsub=null;
 onAuthStateChanged(auth,async user=>{
-  if(unsub){unsub();unsub=null}
+  if(unsub){unsub();unsub=null}if(vUnsub){vUnsub();vUnsub=null}
   $("login").hidden=!!user;$("app").hidden=!user;
   if(!user)return;
   const v=await getDoc(doc(db,"voters",user.uid));
   if(!v.exists()){$("login").hidden=false;$("app").hidden=true;$("lerr").textContent="This account isn\u2019t set up to vote.";signOut(auth);return}
-  me={...v.data(),uid:user.uid};$("hi").textContent="Hi, "+me.name;
-  loadedEp=null;
+  me={...v.data(),uid:user.uid};$("hi").textContent="Hi, "+me.name;loadedEp=null;
+  vUnsub=onSnapshot(doc(db,"voters",user.uid),s=>{if(s.exists()){me={...s.data(),uid:user.uid};if(S)render()}});
   unsub=onSnapshot(doc(db,"state","current"),async s=>{
     S=s.data();
     if(S&&loadedEp!==S.ep){loadedEp=S.ep;await loadBallot()}
+    else if(S){const r=order.filter(n=>S.cast.includes(n));order=r.concat(S.cast.filter(n=>!r.includes(n)))}
     render();
   });
 });
@@ -67,34 +68,18 @@ async function loadBallot(){
   order=r.concat(S.cast.filter(n=>!r.includes(n)));
 }
 
-async function render(){
-  const ballot=$("ballot"),res=$("res");
-  ballot.hidden=true;res.hidden=true;$("msg").textContent="";
+function render(){
+  const ballot=$("ballot");ballot.hidden=true;$("msg").textContent="";
   if(!S){$("msg").textContent="The season hasn\u2019t started yet.";return}
-  if(S.open){
-    ballot.hidden=false;
-    $("eph").textContent="Episode "+S.ep;
-    $("chal").textContent=S.challenge||"Challenge coming soon.";
-    $("save").textContent=saved?"Update ranking":"Submit ranking";
-    $("st").textContent=saved&&!dirty?"Ballot saved. You can change it until voting closes.":saved?"You have unsaved changes.":"Not submitted yet.";
-    drawList();
-  }else{
-    $("msg").textContent=S.published?"":"Voting is closed. Results are coming.";
-    const n=S.published?S.ep:S.ep-1;
-    if(n<1)return;
-    const h=await getDoc(doc(db,"history","ep"+n));
-    if(!h.exists())return;
-    const d=h.data();res.hidden=false;
-    $("rh").textContent="Episode "+d.ep+" ranking";$("rc").textContent=d.challenge;
-    $("rl").innerHTML="";
-    d.rows.forEach((r,i)=>{
-      const li=document.createElement("li"),a=document.createElement("span"),b=document.createElement("span");
-      a.textContent=(i+1)+". "+r.name;
-      b.textContent=r.name===d.eliminated?"Eliminated":r.tag;
-      b.className="t-"+(r.name===d.eliminated?"bot":{"Wins the challenge":"win","Top":"top","Safe":"safe","Bottom two":"bot"}[r.tag]);
-      li.append(a,b);$("rl").append(li);
-    });
-  }
+  if(me.canVote===false){$("msg").textContent="You\u2019re not voting this episode.";return}
+  if(!S.open){$("msg").textContent="Voting is closed. Results are posted in the server.";return}
+  ballot.hidden=false;
+  $("eph").textContent="Episode "+S.ep;
+  $("chal").textContent=S.challenge||"Challenge coming soon.";
+  $("save").textContent=saved?"Update ranking":"Submit ranking";
+  $("st").className="hint";
+  $("st").textContent=saved&&!dirty?"Ballot saved. You can change it until voting closes.":saved?"You have unsaved changes.":"Not submitted yet.";
+  drawList();
 }
 
 function drawList(focus){

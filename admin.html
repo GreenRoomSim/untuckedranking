@@ -61,8 +61,8 @@ function renderAll(){
 
 function renderEp(){
   $("ep").innerHTML='<h2>Episode '+S.ep+'</h2><label for="chal">Challenge description</label>'+
-   '<textarea id="chal" '+(S.published?"disabled":"")+' placeholder="What did the cast do this week? Voters see this above their ballot.">'+esc(S.challenge)+'</textarea>'+
-   '<div class="row"><div><label>Voting</label><div class="seg"><button id="bo" aria-pressed="'+S.open+'" '+(S.published?"disabled":"")+'>Open</button><button id="bl" aria-pressed="'+!S.open+'">Locked</button></div></div>'+
+   '<textarea id="chal" '+""+' placeholder="What did the cast do this week? Voters see this above their ballot.">'+esc(S.challenge)+'</textarea>'+
+   '<div class="row"><div><label>Voting</label><div class="seg"><button id="bo" aria-pressed="'+S.open+'" '+""+'>Open</button><button id="bl" aria-pressed="'+!S.open+'">Locked</button></div></div>'+
    '<span class="hint" id="count"></span></div>'+
    '<p class="hint" style="margin:10px 0 0">'+(S.open?"Voting is open.":"Voting is locked. Nobody can submit or change a ballot.")+'</p>'+
    '<div style="margin-top:18px;display:flex;gap:8px;align-items:flex-end"><div style="width:120px"><label for="epn">Episode number</label><input id="epn" type="number" min="1" value="'+S.ep+'" style="margin:0"></div><button class="btn" id="epset">Change</button></div>'+
@@ -71,10 +71,10 @@ function renderEp(){
   $("epset").onclick=()=>{
     const n=parseInt($("epn").value,10);
     if(!n||n<1||n===S.ep)return;
-    if(confirm("Switch to episode "+n+"? Voting will be locked and this episode\u2019s published state resets."))
-      updateDoc(stRef,{ep:n,open:false,published:false,eliminated:null});
+    if(confirm("Switch to episode "+n+"? Voting will be locked."))
+      updateDoc(stRef,{ep:n,open:false});
   };
-  $("bo").onclick=()=>{if(!S.published)updateDoc(stRef,{open:true})};
+  $("bo").onclick=()=>{updateDoc(stRef,{open:true})};
   $("bl").onclick=()=>updateDoc(stRef,{open:false});
 }
 
@@ -82,16 +82,19 @@ function renderCast(){
   if(!S)return;
   const done=new Set(ballots.map(b=>b.uid));
   const rows=voters.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v=>{
-    const inn=S.cast.includes(v.name);
-    return '<tr><td>'+esc(v.name)+(inn?"":' <span class="gone">(out)</span>')+'</td><td>'+esc(v.username)+'</td><td>'+esc(v.code)+'</td>'+
-      '<td class="'+(done.has(v.id)?"ok":"gone")+'">'+(done.has(v.id)?"Submitted":"Waiting")+'</td>'+
-      '<td style="text-align:right">'+(inn?'<button class="btn small" data-rm="'+esc(v.name)+'">Remove</button>':'')+'</td></tr>';
+    const inn=S.cast.includes(v.name),can=v.canVote!==false;
+    return '<tr><td>'+esc(v.name)+'</td><td>'+esc(v.username)+'</td><td>'+esc(v.code)+'</td>'+
+      '<td class="'+(done.has(v.id)?"ok":"gone")+'">'+(done.has(v.id)?"Submitted":can?"Waiting":"\u2014")+'</td>'+
+      '<td><button class="btn small'+(inn?" primary":"")+'" data-ballot="'+esc(v.name)+'" data-in="'+inn+'">'+(inn?"On ballot":"Off ballot")+'</button></td>'+
+      '<td><button class="btn small'+(can?" primary":"")+'" data-vote="'+v.id+'" data-can="'+can+'">'+(can?"Can vote":"Can\u2019t vote")+'</button></td></tr>';
   }).join("");
-  $("cast").innerHTML='<h2>Cast and accounts</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Code</th><th>Ballot</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+  $("cast").innerHTML='<h2>Cast and accounts</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Code</th><th>Ballot</th><th>Ranked</th><th>Voting</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+   '<p class="hint" style="margin:0 0 18px"><b>Ranked</b>: appears in everyone\u2019s list. <b>Voting</b>: allowed to submit a ballot. Click either to switch it back and forth. Neither deletes the account.</p>'+
    '<label for="nn">Add a person</label><div class="row" style="align-items:flex-start"><input id="nn" placeholder="Display name" maxlength="24"><input id="nu" placeholder="Username" maxlength="20" autocapitalize="none"><input id="nc" placeholder="4-digit code" inputmode="numeric" maxlength="4"><button class="btn" id="add" style="white-space:nowrap">Add</button></div>'+
-   '<p class="err" role="alert">'+castErr+'</p><p class="hint">Removing someone drops them from every ballot. Send codes by DM.</p>';
-  $("count").textContent=done.size+" of "+voters.length+" ballots in";
-  $("cast").querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>updateDoc(stRef,{cast:arrayRemove(b.dataset.rm)}));
+   '<p class="err" role="alert">'+castErr+'</p>';
+  $("count").textContent=done.size+" of "+voters.filter(v=>v.canVote!==false).length+" ballots in";
+  $("cast").querySelectorAll("[data-ballot]").forEach(b=>b.onclick=()=>updateDoc(stRef,{cast:b.dataset.in==="true"?arrayRemove(b.dataset.ballot):arrayUnion(b.dataset.ballot)}));
+  $("cast").querySelectorAll("[data-vote]").forEach(b=>b.onclick=()=>updateDoc(doc(db,"voters",b.dataset.vote),{canVote:b.dataset.can!=="true"}));
   $("add").onclick=addPerson;
 }
 async function addPerson(){
@@ -108,28 +111,16 @@ async function addPerson(){
 function standings(){
   const sum={},cnt={};S.cast.forEach(n=>{sum[n]=0;cnt[n]=0});
   ballots.forEach(b=>b.ranking.filter(n=>S.cast.includes(n)).forEach((n,i)=>{sum[n]+=i+1;cnt[n]++}));
-  const rows=S.cast.map(n=>({name:n,avg:cnt[n]?sum[n]/cnt[n]:0})).sort((a,b)=>a.avg-b.avg),N=rows.length;
-  rows.forEach((r,i)=>r.tag=i===0?"Wins the challenge":(N>=6&&i<=2)?"Top":(N>3&&i>=N-2)?"Bottom two":"Safe");
-  return rows;
+  return S.cast.map(n=>({name:n,avg:cnt[n]?sum[n]/cnt[n]:0})).sort((a,b)=>a.avg-b.avg);
 }
 function renderRes(){
-  const sec=$("results");if(!S||S.open||!ballots.length&&!S.published){sec.hidden=true;return}
-  sec.hidden=false;const rows=standings(),e=S.published?S.eliminated:elim;
-  if(S.published){
-    sec.innerHTML='<h2>Episode '+S.ep+' ranking is published</h2><button class="btn primary" id="next">Start episode '+(S.ep+1)+'</button>';
-    $("next").onclick=()=>updateDoc(stRef,{ep:S.ep+1,challenge:"",open:false,published:false,eliminated:null,...(S.eliminated?{cast:arrayRemove(S.eliminated)}:{})});
-    return;
-  }
-  sec.innerHTML='<h2>Results</h2><div class="scroll"><table><thead><tr><th></th><th>Contestant</th><th>Avg rank</th><th>Placement</th><th></th></tr></thead><tbody>'+
-   rows.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(r.name)+'</td><td>'+r.avg.toFixed(2)+'</td><td class="'+cls[r.tag]+'">'+r.tag+'</td><td style="text-align:right">'+
-     (r.tag==="Bottom two"?'<button class="btn small '+(e===r.name?"primary":"")+'" data-el="'+esc(r.name)+'">'+(e===r.name?"Eliminated":"Eliminate")+'</button>':"")+'</td></tr>').join("")+
-   '</tbody></table></div><p class="hint" style="margin:0 0 12px">Lowest average is best. Run the lip sync in Discord, then mark who goes home.</p><p class="err" role="alert">'+err+'</p><button class="btn primary" id="pub">Publish episode '+S.ep+' ranking</button>';
-  sec.querySelectorAll("[data-el]").forEach(b=>b.onclick=()=>{elim=elim===b.dataset.el?null:b.dataset.el;err="";renderRes()});
-  $("pub").onclick=async()=>{
-    if(!S.challenge.trim()){err="Add a challenge description first.";return renderRes()}
-    if(!elim&&S.cast.length>2){err="Choose who is eliminated.";return renderRes()}
-    await setDoc(doc(db,"history","ep"+S.ep),{ep:S.ep,challenge:S.challenge,rows,eliminated:elim||null});
-    await updateDoc(stRef,{published:true,open:false,eliminated:elim||null});
-  };
+  const sec=$("results");if(!S||S.open||!ballots.length){sec.hidden=true;return}
+  sec.hidden=false;const rows=standings();
+  sec.innerHTML='<h2>Results</h2><div class="scroll"><table><thead><tr><th></th><th>Contestant</th><th>Avg rank</th></tr></thead><tbody>'+
+   rows.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(r.name)+'</td><td>'+r.avg.toFixed(2)+'</td></tr>').join("")+
+   '</tbody></table></div><p class="hint" style="margin:0 0 14px">Lowest average is best. Placements are up to you. Post them in the server.</p>'+
+   '<div class="row" style="justify-content:flex-start"><button class="btn" id="copy">Copy for Discord</button><button class="btn primary" id="next">Start episode '+(S.ep+1)+'</button></div>';
+  $("copy").onclick=async()=>{await navigator.clipboard.writeText(rows.map((r,i)=>(i+1)+". "+r.name+" ("+r.avg.toFixed(2)+")").join("\n"));$("copy").textContent="Copied"};
+  $("next").onclick=()=>{if(confirm("Start episode "+(S.ep+1)+"? Voting stays locked until you open it."))updateDoc(stRef,{ep:S.ep+1,challenge:"",open:false})};
 }
 </script></body></html>
