@@ -63,8 +63,17 @@ function renderEp(){
   $("ep").innerHTML='<h2>Episode '+S.ep+'</h2><label for="chal">Challenge description</label>'+
    '<textarea id="chal" '+(S.published?"disabled":"")+' placeholder="What did the cast do this week? Voters see this above their ballot.">'+esc(S.challenge)+'</textarea>'+
    '<div class="row"><div><label>Voting</label><div class="seg"><button id="bo" aria-pressed="'+S.open+'" '+(S.published?"disabled":"")+'>Open</button><button id="bl" aria-pressed="'+!S.open+'">Locked</button></div></div>'+
-   '<span class="hint" id="count"></span></div>';
+   '<span class="hint" id="count"></span></div>'+
+   '<p class="hint" style="margin:10px 0 0">'+(S.open?"Voting is open.":"Voting is locked. Nobody can submit or change a ballot.")+'</p>'+
+   '<div style="margin-top:18px;display:flex;gap:8px;align-items:flex-end"><div style="width:120px"><label for="epn">Episode number</label><input id="epn" type="number" min="1" value="'+S.ep+'" style="margin:0"></div><button class="btn" id="epset">Change</button></div>'+
+   '<p class="hint">Changing the number switches to that episode\u2019s ballots and locks voting. Nothing is deleted.</p>';
   $("chal").onchange=e=>updateDoc(stRef,{challenge:e.target.value});
+  $("epset").onclick=()=>{
+    const n=parseInt($("epn").value,10);
+    if(!n||n<1||n===S.ep)return;
+    if(confirm("Switch to episode "+n+"? Voting will be locked and this episode\u2019s published state resets."))
+      updateDoc(stRef,{ep:n,open:false,published:false,eliminated:null});
+  };
   $("bo").onclick=()=>{if(!S.published)updateDoc(stRef,{open:true})};
   $("bl").onclick=()=>updateDoc(stRef,{open:false});
 }
